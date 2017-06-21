@@ -136,6 +136,9 @@ struct mqtt3_config {
 	int sys_interval;
 	bool upgrade_outgoing_qos;
 	char *user;
+	char *redis_host;
+	int redis_port;
+	char *redis_auth;
 	bool verbose;
 #ifdef WITH_WEBSOCKETS
 	int websockets_log_level;
