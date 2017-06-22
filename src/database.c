@@ -23,6 +23,7 @@ Contributors:
 #include <memory_mosq.h>
 #include <send_mosq.h>
 #include <time_mosq.h>
+#include <cJSON/cJSON.h>
 
 static int max_inflight = 20;
 static int max_queued = 100;
@@ -807,6 +808,82 @@ int mqtt3_db_message_release(struct mosquitto_db *db, struct mosquitto *context,
 	}
 }
 
+
+
+/**
+ * 监测消息是否过期
+ * @param mosq :mosquitto context
+ * @param payloadlen : 消息长度
+ * @param payload : 消息内容
+ * @return 1 已经过期， 0 未过期
+ */
+int is_expired(struct mosquitto *mosq, uint32_t payloadlen, const void *payload) 
+{
+   cJSON * root = cJSON_Parse(payload);
+   if (root) {
+       char *rendered = cJSON_Print(root);
+       _mosquitto_log_printf(mosq, MOSQ_LOG_DEBUG, "expired payload: %s", rendered);
+       
+       cJSON *expire_at = cJSON_GetObjectItem(root, "expiredAt");
+       if (expire_at) {
+           int current_timestamp = (int)time(NULL); 
+           _mosquitto_log_printf(mosq, MOSQ_LOG_DEBUG, "Expire at: %d, Current timestamp: %d", expire_at->valueint, current_timestamp);
+           if (expire_at->valueint <= current_timestamp) {
+               cJSON_Delete(root);
+               _mosquitto_log_printf(mosq, MOSQ_LOG_DEBUG, "The message has already expired!");
+               return 1;               
+           }
+       } else {
+            _mosquitto_log_printf(mosq, MOSQ_LOG_DEBUG, "expiredAt key does not exist!");
+       }
+   }
+   cJSON_Delete(root);
+   return 0;
+}
+
+/**
+ * 监测脚本是否被cancelled
+ * @param db : mosquitto db
+ * @param mosq :mosquitto context
+ * @param payloadlen : 消息长度
+ * @param payload : 消息内容
+ * @return 1 已经取消， 0 未取消
+ */
+int is_cancelled(struct mosquitto_db *db, struct mosquitto *mosq, uint32_t payloadlen, const void *payload) 
+{
+   int result = 0; 
+   cJSON * root = cJSON_Parse(payload);
+   if (root) {
+//       char *rendered = cJSON_Print(root);
+//       _mosquitto_log_printf(mosq, MOSQ_LOG_DEBUG, "payload: %s", rendered);
+       
+       cJSON *transaction_id = cJSON_GetObjectItem(root, "transactionID");
+       cJSON *cmd = cJSON_GetObjectItem(root, "cmd");
+       if (transaction_id && cmd) {
+           _mosquitto_log_printf(mosq, MOSQ_LOG_DEBUG, "Transaction ID: %s", transaction_id->valuestring);
+           _mosquitto_log_printf(mosq, MOSQ_LOG_DEBUG, "CMD: %s", cmd->valuestring);
+           
+           if (strcmp(cmd->valuestring, "makeCall") == 0) {
+               if (db->redis_context) {
+                    redisReply *redis_reply;
+                    redis_reply = redisCommand(db->redis_context, "HGET mqtt_cancelled %s", transaction_id->valuestring);
+                    if (redis_reply->str) {
+                        _mosquitto_log_printf(NULL, MOSQ_LOG_NOTICE, "Cancelled reply: %s", redis_reply->str);
+                        if (redis_reply && strcmp(redis_reply->str, "1") == 0) {
+                            _mosquitto_log_printf(mosq, MOSQ_LOG_DEBUG, "Transaction ID: %s is cancelled", transaction_id->valuestring);
+                            result = 1;
+                        }
+                    }
+                    freeReplyObject(redis_reply);
+               }
+           }
+       }
+   }
+   cJSON_Delete(root);
+   return result;
+}
+
+
 int mqtt3_db_message_write(struct mosquitto_db *db, struct mosquitto *context)
 {
 	int rc;
@@ -845,38 +922,55 @@ int mqtt3_db_message_write(struct mosquitto_db *db, struct mosquitto *context)
 
 			switch(tail->state){
 				case mosq_ms_publish_qos0:
-					rc = _mosquitto_send_publish(context, mid, topic, payloadlen, payload, qos, retain, retries);
-					if(!rc){
-						_message_remove(db, context, &tail, last);
-					}else{
-						return rc;
-					}
+                                        if (is_cancelled(db, context, payloadlen, payload) || is_expired(context, payloadlen, payload)) {
+                                            _message_remove(db, context, &tail, last);
+                                        } else { 
+                                            rc = _mosquitto_send_publish(context, mid, topic, payloadlen, payload, qos, retain, retries);
+                                            if(!rc){
+                                                    _message_remove(db, context, &tail, last);
+                                            }else{
+                                                    return rc;
+                                            }
+                                        }
 					break;
 
 				case mosq_ms_publish_qos1:
-					rc = _mosquitto_send_publish(context, mid, topic, payloadlen, payload, qos, retain, retries);
-					if(!rc){
-						tail->timestamp = mosquitto_time();
-						tail->dup = 1; /* Any retry attempts are a duplicate. */
-						tail->state = mosq_ms_wait_for_puback;
-					}else{
-						return rc;
-					}
-					last = tail;
-					tail = tail->next;
+                                        if (is_cancelled(db, context, payloadlen, payload) || is_expired(context, payloadlen, payload)) {
+                                            // 如果取消了或者过期了就移除
+                                            _message_remove(db, context, &tail, last);
+                                        } else {
+                                            rc = _mosquitto_send_publish(context, mid, topic, payloadlen, payload, qos, retain, retries);
+                                            if(!rc){
+                                                    tail->timestamp = mosquitto_time();
+                                                    tail->dup = 1; /* Any retry attempts are a duplicate. */
+                                                    tail->state = mosq_ms_wait_for_puback;
+                                            }else{
+                                                    return rc;
+                                            }
+                                            last = tail;
+                                            tail = tail->next;
+                                        }
 					break;
 
 				case mosq_ms_publish_qos2:
-					rc = _mosquitto_send_publish(context, mid, topic, payloadlen, payload, qos, retain, retries);
-					if(!rc){
-						tail->timestamp = mosquitto_time();
-						tail->dup = 1; /* Any retry attempts are a duplicate. */
-						tail->state = mosq_ms_wait_for_pubrec;
-					}else{
-						return rc;
-					}
-					last = tail;
-					tail = tail->next;
+                                        // 检查是否要设置取消标志或者过期
+                                        if (is_cancelled(db, context, payloadlen, payload) || is_expired(context, payloadlen, payload)) {
+                                            // 如果取消了或者过期了就移除
+                                            _message_remove(db, context, &tail, last);
+                                        } else {
+                                            rc = _mosquitto_send_publish(context, mid, topic, payloadlen, payload, qos, retain, retries);
+                                            if(!rc){
+                                                    tail->timestamp = mosquitto_time();
+                                                    tail->dup = 1; /* Any retry attempts are a duplicate. */
+                                                    tail->state = mosq_ms_wait_for_pubrec;
+                                            }else{
+                                                    return rc;
+                                            }
+                                            last = tail;
+                                            tail = tail->next;
+                                        }
+                                        
+					
 					break;
 				
 				case mosq_ms_send_pubrec:

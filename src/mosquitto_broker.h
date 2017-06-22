@@ -43,6 +43,7 @@ Contributors:
 #include <mosquitto_internal.h>
 #include <mosquitto_plugin.h>
 #include <mosquitto.h>
+#include <hiredis/hiredis.h>
 #include "tls_mosq.h"
 #include "uthash.h"
 
@@ -270,6 +271,7 @@ struct mosquitto_db{
 	int retained_count;
 #endif
 	struct mosquitto *ll_for_free;
+    redisContext *redis_context;
 };
 
 enum mqtt3_bridge_direction{

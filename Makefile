@@ -1,6 +1,6 @@
 include config.mk
 
-DIRS=lib client src src/hiredis
+DIRS=lib client src/hiredis src
 DOCDIRS=man
 DISTDIRS=man
 
