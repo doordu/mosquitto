@@ -14,8 +14,9 @@ Mosquitto多度增强版本，增加上线下线状态，取消推送，超时�
 
 ## 安装
 
+    git submodule update --init --recursive
     make && make install
-    
+
 
 ## 配置
 
