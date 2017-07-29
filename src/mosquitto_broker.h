@@ -43,6 +43,7 @@ Contributors:
 #include <mosquitto_internal.h>
 #include <mosquitto_plugin.h>
 #include <mosquitto.h>
+#include <hiredis/hiredis.h>
 #include "tls_mosq.h"
 #include "uthash.h"
 
@@ -137,6 +138,9 @@ struct mqtt3_config {
 	int sys_interval;
 	bool upgrade_outgoing_qos;
 	char *user;
+	char *redis_host;
+	int redis_port;
+	char *redis_auth;
 	bool verbose;
 #ifdef WITH_WEBSOCKETS
 	int websockets_log_level;
@@ -268,6 +272,7 @@ struct mosquitto_db{
 	int retained_count;
 #endif
 	struct mosquitto *ll_for_free;
+    redisContext *redis_context;
 };
 
 enum mqtt3_bridge_direction{

@@ -199,6 +199,9 @@ void mqtt3_config_init(struct mqtt3_config *config)
 	config->listener_count = 0;
 	config->pid_file = NULL;
 	config->user = NULL;
+	config->redis_host = NULL;
+	config->redis_port = 0;
+	config->redis_auth = NULL;
 #ifdef WITH_BRIDGE
 	config->bridges = NULL;
 	config->bridge_count = 0;
@@ -1712,6 +1715,14 @@ int _config_read_file_core(struct mqtt3_config *config, bool reload, const char 
 				}else if(!strcmp(token, "user")){
 					if(reload) continue; // Drop privileges user not valid for reloading.
 					if(_conf_parse_string(&token, "user", &config->user, saveptr)) return MOSQ_ERR_INVAL;
+				}else if(!strcmp(token, "redis_host")) {
+					if(reload) continue; // Drop privileges user not valid for reloading.
+					if(_conf_parse_string(&token, "redis_host", &config->redis_host, saveptr)) return MOSQ_ERR_INVAL;
+				}else if(!strcmp(token, "redis_auth")) {
+					if(reload) continue; // Drop privileges user not valid for reloading.
+					if(_conf_parse_string(&token, "redis_auth", &config->redis_auth, saveptr)) return MOSQ_ERR_INVAL;
+				}else if(!strcmp(token, "redis_port")) {
+					if(_conf_parse_int(&token, "redis_port", &config->redis_port, saveptr)) return MOSQ_ERR_INVAL;
 				}else if(!strcmp(token, "use_username_as_clientid")){
 					if(reload) continue; // Listeners not valid for reloading.
 					if(_conf_parse_bool(&token, "use_username_as_clientid", &cur_listener->use_username_as_clientid, saveptr)) return MOSQ_ERR_INVAL;

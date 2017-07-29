@@ -456,7 +456,23 @@ void do_disconnect(struct mosquitto_db *db, struct mosquitto *context)
 			}else{
 				_mosquitto_log_printf(NULL, MOSQ_LOG_NOTICE, "Client %s disconnected.", id);
 			}
+
+			
 		}
+
+		if (db->redis_context->err == 3) {
+			_mosquitto_log_printf(NULL, MOSQ_LOG_NOTICE, "Trying to reconnect redis server");
+			redisReconnect(db->redis_context);
+		}
+
+		if (!db->redis_context && context->id) {
+            id = context->id;
+			redisReply *redis_reply;
+			redis_reply = redisCommand(db->redis_context, "HDEL mqtt %s", id);
+			freeReplyObject(redis_reply);
+			_mosquitto_log_printf(NULL, MOSQ_LOG_NOTICE, "%s client updated to offline", id);
+		}
+
 		mqtt3_context_disconnect(db, context);
 #ifdef WITH_BRIDGE
 		if(context->clean_session && !context->bridge){

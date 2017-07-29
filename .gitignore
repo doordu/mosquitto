@@ -41,3 +41,4 @@ test/lib/cpp/*.test
 
 build/
 dist/
+.idea/

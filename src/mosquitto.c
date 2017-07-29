@@ -214,6 +214,9 @@ void handle_sigusr2(int signal)
 int main(int argc, char *argv[])
 {
 	mosq_sock_t *listensock = NULL;
+    redisContext *redis_context = NULL;
+    struct timeval timeout = {1, 500000};
+
 	int listensock_count = 0;
 	int listensock_index = 0;
 	struct mqtt3_config config;
@@ -263,6 +266,41 @@ int main(int argc, char *argv[])
 	rc = mqtt3_config_parse_args(&config, argc, argv);
 	if(rc != MOSQ_ERR_SUCCESS) return rc;
 	int_db.config = &config;
+
+    _mosquitto_log_printf(NULL, MOSQ_LOG_INFO, "Connecting to redis: %s:%d", config.redis_host, config.redis_port);
+    redis_context = redisConnectWithTimeout(config.redis_host, config.redis_port, timeout);
+
+    if (redis_context == NULL || redis_context->err) {
+        if (redis_context) {
+            _mosquitto_log_printf(NULL, MOSQ_LOG_ERR, "Connect failed: %s", redis_context->errstr);
+        } else {
+            _mosquitto_log_printf(NULL, MOSQ_LOG_ERR, "Connection error: can't allocate redis context");
+        }
+        exit(1);
+    }
+
+    _mosquitto_log_printf(NULL, MOSQ_LOG_INFO, "Connected to redis %s:%d", config.redis_host, config.redis_port);
+
+    redisReply *redis_reply;
+
+    if (config.redis_auth) {
+        redis_reply = redisCommand(redis_context, "AUTH %s", config.redis_auth);
+
+        _mosquitto_log_printf(NULL, MOSQ_LOG_NOTICE, "The password of Redis: %s", config.redis_auth);
+        freeReplyObject(redis_reply);
+    }
+
+    _mosquitto_log_printf(NULL, MOSQ_LOG_NOTICE, "Cleaning last data");
+
+    // 清除原始数据
+    redis_reply = redisCommand(redis_context, "HDEL mqtt");
+
+    freeReplyObject(redis_reply);
+
+    redis_reply = redisCommand(redis_context, "HDEL mqtt_cancelled");
+    freeReplyObject(redis_reply);
+
+    int_db.redis_context = redis_context;
 
 	if(config.daemon){
 		mosquitto__daemonise();
@@ -383,6 +421,8 @@ int main(int argc, char *argv[])
 
 	run = 1;
 	rc = mosquitto_main_loop(&int_db, listensock, listensock_count, listener_max);
+        
+        redisFree(redis_context);
 
 	_mosquitto_log_printf(NULL, MOSQ_LOG_INFO, "mosquitto version %s terminating", VERSION);
 	mqtt3_log_close(&config);

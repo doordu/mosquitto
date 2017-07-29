@@ -534,6 +534,19 @@ int mqtt3_handle_connect(struct mosquitto_db *db, struct mosquitto *context)
 		}
 	}
 
+	if (db->redis_context->err == 3) {
+		_mosquitto_log_printf(NULL, MOSQ_LOG_NOTICE, "Trying to reconnect redis server");
+		redisReconnect(db->redis_context);
+	}
+
+	if (!db->redis_context) {
+		redisReply *redis_reply;
+		redis_reply = redisCommand(db->redis_context, "HSET mqtt %s 1", client_id);
+		freeReplyObject(redis_reply);
+		_mosquitto_log_printf(NULL, MOSQ_LOG_NOTICE, "%s client updated to online", client_id);
+	}
+
+
 	context->id = client_id;
 	client_id = NULL;
 	context->clean_session = clean_session;
